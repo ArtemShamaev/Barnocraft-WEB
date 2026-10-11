@@ -141,7 +141,8 @@ class GameOptions {
   constructor() { this.distance = 3; this.fov = 75; this.sensitivity = 1; this.texturePack = 0; }
   load() {
     try {
-      const p = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      const raw = localStorage.getItem(SETTINGS_KEY); this.saved = raw !== null;
+      const p = JSON.parse(raw || '{}');
       if (Number.isFinite(p.distance)) this.distance = BC.clamp(Math.round(p.distance), 2, 6);
       if (Number.isFinite(p.fov)) this.fov = BC.clamp(Math.round(p.fov), 60, 100);
       if (Number.isFinite(p.sensitivity)) this.sensitivity = BC.clamp(p.sensitivity, .5, 2);
@@ -149,7 +150,8 @@ class GameOptions {
     } catch (e) { /* defaults */ }
   }
   save() {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this)); return true; } catch (e) { return false; }
+    const { distance, fov, sensitivity, texturePack } = this;
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ distance, fov, sensitivity, texturePack })); return true; } catch (e) { return false; }
   }
 }
 BC.GameOptions = GameOptions;

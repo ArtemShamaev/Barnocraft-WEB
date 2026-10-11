@@ -352,6 +352,14 @@ class Hud {
     const barWidth = BC.HOTBAR_SIZE * 48 + 10, scale = Math.min(1, this.width / (barWidth + 20));
     return { barWidth, scale, left: this.width / 2 - barWidth / 2 * scale, slotStart: -barWidth / 2 + 6 };
   }
+  /** Index of the hotbar slot under a screen point, or -1. */
+  hotbarIndexAt(cx, cy) {
+    const { scale, slotStart } = this.barGeometry();
+    const x = (cx - this.width / 2) / scale, y = (this.height - 16 - cy) / scale;
+    if (y < 4 || y > 52) return -1;
+    const i = Math.floor((x - slotStart) / 48);
+    return i >= 0 && i < BC.HOTBAR_SIZE ? i : -1;
+  }
   overlayCell(cx, cy) {
     let top = 245 - 180; // the first overlay starts 245 px below the top edge in the Java layout
     for (const [id, data] of this.overlays) {

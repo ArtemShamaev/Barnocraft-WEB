@@ -42,7 +42,10 @@ class Game {
     const canvas = document.getElementById('game');
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     if (!this.renderer.capabilities.isWebGL2) throw new Error('Нужен браузер с поддержкой WebGL 2');
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.mobile = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+    // Phones get a lighter default: fewer pixels and a shorter render distance on first start.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.mobile ? 1.25 : 2));
+    if (this.mobile && !this.options.saved) this.options.distance = 2;
     this.renderer.setClearColor(new THREE.Color(135 / 255, 206 / 255, 235 / 255));
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(this.options.fov, 1, .05, 500);
@@ -53,7 +56,8 @@ class Game {
     this.ui = document.getElementById('ui'); this.g = this.ui.getContext('2d');
     this.hud = new BC.Hud(); this.menu = new BC.Menu();
     this.panorama = new BC.LoadingPanorama(); this.scene.add(this.panorama.view.group);
-    this.bindInput(); this.resize(); window.addEventListener('resize', () => this.resize());
+    this.bindInput(); this.touch = new BC.TouchControls(this);
+    this.resize(); window.addEventListener('resize', () => this.resize());
     if (!this.saves.persistent) this.message = 'Хранилище браузера недоступно: миры не сохранятся после закрытия вкладки';
     await this.show('MAIN');
     this.last = performance.now();
@@ -106,7 +110,11 @@ class Game {
       this.wantedLock = false;
     });
     window.addEventListener('blur', () => { if (this.active) this.back(); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden && this.world) this.saveNow(); });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) return;
+      if (this.active && this.touch && this.touch.enabled) this.back(); // phones: switching apps pauses
+      else if (this.world) this.saveNow();
+    });
     window.addEventListener('beforeunload', () => { if (this.world && !this.isGuest()) this.saveNow(); });
     this.folderInput = document.getElementById('mod-folder'); this.fileInput = document.getElementById('mod-file');
     this.importInput = document.getElementById('world-import');
@@ -123,14 +131,18 @@ class Game {
       this.show('WORLDS');
     });
   }
+  /** Looking around works with a locked mouse or, on touch screens, without any lock. */
+  pointerReady() { return (this.touch && this.touch.enabled) || document.pointerLockElement === this.ui; }
   lockPointer() {
-    if (document.pointerLockElement === this.ui) return;
+    if (document.pointerLockElement === this.ui || (this.touch && this.touch.enabled)) return;
     this.wantedLock = true;
     try { const r = this.ui.requestPointerLock(); if (r && r.catch) r.catch(() => { this.wantedLock = false; }); } catch (e) { this.wantedLock = false; }
   }
   unlockPointer() { this.wantedLock = false; if (document.pointerLockElement) document.exitPointerLock(); }
   keyDown(e) {
     const code = e.code;
+    // The hidden text field of the on-screen keyboard reports text through its input event.
+    if (this.touch && e.target === this.touch.input && code !== 'Escape') return;
     if (['F3', 'F10', 'Tab', 'Space', 'Backspace', 'Slash', 'Quote'].includes(code) || (this.active && code.startsWith('Arrow'))) e.preventDefault();
     if (this.screen === 'MULTIPLAYER' || this.screen === 'OPEN_NETWORK') { this.networkKey(e); return; }
     if (this.creatingWorldName) { this.nameKey(e); return; }
@@ -314,7 +326,7 @@ class Game {
   resetBreakProgress() { this.breakProgress = 0; this.breakX = this.breakY = this.breakZ = null; }
   updateBreakProgress(tpf) {
     if (!this.active || !this.world) { if (this.breakHeld) { this.breakHeld = false; this.resetBreakProgress(); } return; }
-    if (!this.breakHeld || document.pointerLockElement !== this.ui) { if (this.breakProgress > 0) this.resetBreakProgress(); return; }
+    if (!this.breakHeld || !this.pointerReady()) { if (this.breakProgress > 0) this.resetBreakProgress(); return; }
     const hit = this.target(); if (!hit) { this.resetBreakProgress(); return; }
     const { x, y, z } = hit, world = this.world, block = world.get(x, y, z);
     if (BC.Block.immutable(block) || block === B.AIR || (!BC.SOLID[block] && block !== B.TORCH && block !== B.LANTERN && !BC.Block.crop(block))) { this.resetBreakProgress(); return; }
@@ -348,6 +360,11 @@ class Game {
     if (!this.active) { this.mapInteraction = false; this.unlockPointer(); }
     else if (!this.mapInteraction) this.lockPointer();
     this.hud.active = this.active;
+    if (this.touch) {
+      if (!this.active) this.touch.reset();
+      if (this.creatingWorldName) this.touch.focusInput();
+      else if (!this.touch.field() && document.activeElement === this.touch.input) this.touch.input.blur();
+    }
     const m = this.menu;
     if (this.active) { m.hide(); return; }
     switch (next) {
@@ -915,9 +932,16 @@ class Game {
     if (this.active && this.worldView && this.worldView.ready(player.position.x, player.position.z)) {
       const forward = { x: -Math.sin(this.yaw), z: -Math.cos(this.yaw) }, right = { x: Math.cos(this.yaw), z: -Math.sin(this.yaw) };
       const m = this.movement; let mx = 0, mz = 0;
-      if (m[0]) { mx += forward.x; mz += forward.z; } if (m[1]) { mx -= forward.x; mz -= forward.z; }
-      if (m[2]) { mx -= right.x; mz -= right.z; } if (m[3]) { mx += right.x; mz += right.z; }
-      const l = Math.hypot(mx, mz); if (l > 0) { mx /= l; mz /= l; }
+      if (this.analogMove && Math.hypot(this.analogMove.x, this.analogMove.y) > .2) {
+        // Touch stick: direction and speed follow the thumb.
+        const a = this.analogMove;
+        mx = forward.x * -a.y + right.x * a.x; mz = forward.z * -a.y + right.z * a.x;
+        const l = Math.hypot(mx, mz); if (l > 1) { mx /= l; mz /= l; }
+      } else {
+        if (m[0]) { mx += forward.x; mz += forward.z; } if (m[1]) { mx -= forward.x; mz -= forward.z; }
+        if (m[2]) { mx -= right.x; mz -= right.z; } if (m[3]) { mx += right.x; mz += right.z; }
+        const l = Math.hypot(mx, mz); if (l > 0) { mx /= l; mz /= l; }
+      }
       const move = { x: mx, y: player.creative ? (this.flyUp ? 1 : 0) - (this.flyDown ? 1 : 0) : 0, z: mz };
       player.update(this.world, Math.min(tpf, .05), move, this.jump || (player.inWater(this.world) && this.flyUp));
       this.jump = false;
@@ -926,7 +950,7 @@ class Game {
     this.updatePortal(tpf);
     if (!menuScene) this.updateCamera();
     this.updateHighlight();
-    this.hud.hint = this.active && !this.mapInteraction && document.pointerLockElement !== this.ui ? 'Нажмите, чтобы продолжить' : '';
+    this.hud.hint = this.active && !this.mapInteraction && !this.pointerReady() ? 'Нажмите, чтобы продолжить' : '';
     if (!this.active) this.menu.hover(this.cursor.x, this.cursor.y);
   }
   updateCamera() {
@@ -984,6 +1008,7 @@ class Game {
     g.clearRect(0, 0, this.ui.width, this.ui.height);
     g.imageSmoothingEnabled = false;
     if (this.active || (this.world && DRAG_SCREENS.has(this.screen))) this.hud.draw(g, this.inventory);
+    if (this.active && this.touch) this.touch.draw(g);
     if (!this.active) {
       let drag = null;
       if (this.inventoryDrag) {
