@@ -1,0 +1,9 @@
+# Render.com Blueprint: the free web service serves the game and the multiplayer relay.
+services:
+  - type: web
+    name: barnocraft-web
+    runtime: node
+    plan: free
+    buildCommand: node --version
+    startCommand: node server.js
+    healthCheckPath: /

@@ -1,0 +1,13 @@
+{
+  "name": "barnocraft-web",
+  "version": "1.0.0",
+  "description": "Barnocraft WEB — браузерная версия Barnocraft Java Edition",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/",
+    "assets": "python3 tools/build-assets.py"
+  },
+  "engines": { "node": ">=18" },
+  "license": "UNLICENSED"
+}
